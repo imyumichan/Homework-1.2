@@ -14,6 +14,7 @@ results_path = '../data/tracking/valid/results';
 % Read the object's geometry 
 % Here vertices correspond to object's corners and faces are triangles
 [vertices, faces] = read_ply(object_path);
+faces=faces+1;
 
 % Create directory for results
 if ~exist(results_path,'dir') 
@@ -25,7 +26,10 @@ end
 load('gt_valid.mat')
 
 % TODO: setup camera parameters (camera_params) using cameraParameters()
-
+intrinsicMatrix = [2960.37845 0 0;
+                   0 2960.37845 0;
+                   1841.68855 1235.23369  1];
+camera_params = cameraParameters('IntrinsicMatrix',intrinsicMatrix);
 
 %% Get all filenames in images folder
 
@@ -47,19 +51,20 @@ cam_in_world_locations = zeros(1,3,num_files);
 keypoints = cell(num_files,1); 
 descriptors = cell(num_files,1); 
 
-for i=1:length(Filenames)
-    fprintf('Calculating sift features for image: %d \n', i)
-    
-%    TODO: Prepare the image (img) for vl_sift() function
-    [keypoints{i}, descriptors{i}] = vl_sift(img) ;
-end
+% for i=1:length(Filenames)
+%     fprintf('Calculating sift features for image: %d \n', i)
+%     
+% %    TODO: Prepare the image (img) for vl_sift() function
+%     img = single(rgb2gray(imread(char(Filenames(i)))));
+%     [keypoints{i}, descriptors{i}] = vl_sift(img) ;
+% end
 
 % Save sift features and descriptors and load them when you rerun the code to save time
-save('sift_descriptors.mat', 'descriptors')
-save('sift_keypoints.mat', 'keypoints')
+% save('sift_descriptors.mat', 'descriptors')
+% save('sift_keypoints.mat', 'keypoints')
 
-% load('sift_descriptors.mat');
-% load('sift_keypoints.mat');
+load('sift_descriptors.mat');
+load('sift_keypoints.mat');
 
 %% Initialization: Compute camera pose for the first image
 
@@ -75,8 +80,10 @@ save('sift_keypoints.mat', 'keypoints')
 
 
 % TODO: Estimate camera position for the first image
-[init_orientation, init_location] = estimateWorldCameraPose(image_points, world_points, camera_params, 'MaxReprojectionError', 4);
-
+% [init_orientation, init_location] = estimateWorldCameraPose(image_points, world_points, camera_params, 'MaxReprojectionError', 4);
+% [init_orientation, init_location] = find_initial_pose();
+load('init_location.mat')
+load('init_orientation.mat')
 cam_in_world_orientations(:,:, 1) = init_orientation;
 cam_in_world_locations(:,:, 1) = init_location;
 
@@ -88,7 +95,7 @@ hold on;
 imshow(char(Filenames(1)), 'InitialMagnification', 'fit');
 title(sprintf('Initial Image Camera Pose'));
 %   Plot bounding box
-points = project3d2image(vertices',camera_params, cam_in_world_orientations(:,:,1), cam_in_world_locations(:, :, 1));
+points = project3d2image(vertices',camera_params, cam_in_world_orientations(:,:,1), cam_in_world_locations(:, :, 1), "NORMAL");
 for j=1:12
     plot(points(1, edges(:, j)), points(2, edges(:,j)), 'color', 'b');
 end
@@ -122,6 +129,94 @@ hold off;
 % either using Symbolic toolbox or finite differences approach
 
 % TODO: Implement IRLS method for the reprojection error optimisation
+threshold_irls = 0.005; % update threshold for IRLS
+lambda = 0.001;
+N = 20; % number of iterations
+threshold_ubcmatch = 6; % matching threshold for vl_ubcmatch()
+vert1 = vertices(faces(:,1),:);
+vert2 = vertices(faces(:,2),:);
+vert3 = vertices(faces(:,3),:);
+num_samples = 5000;
+num_images = size(Filenames,2);
+u = threshold_irls + 1;
+for i=2:num_images
+    if u < threshold_irls
+        break
+    end
+    rotMatrix = cam_in_world_orientations(:,:,i-1 );
+    translation_vector = cam_in_world_locations(:,:,i-1 );
+    [backCoords,backDescriptors] = back_projection(num_samples,keypoints{i-1},descriptors{i-1},rotMatrix,translation_vector,vert1,vert2,vert3,camera_params);
+    currModel.coords3d = backCoords; 
+    currModel.descriptors = backDescriptors; %previous model
+    matches = vl_ubcmatch(descriptors{i}, currModel.descriptors, threshold_ubcmatch);
+    m = (keypoints{i}(1:2,matches(1,:)));
+ 
+    points_3d = currModel.coords3d(matches(2,:),:);
+    theta = [rotationMatrixToVector(rotMatrix) translation_vector];
+    true_2d = keypoints{i}(1:2,matches(1,:));
+    for j=1:N
+        v = theta(1:3);
+        points_uvw = project3d2image(currModel.coords3d(matches(2,:),:)',camera_params,rotationVectorToMatrix(theta(4:end)),v,"uvw");
+        points_2d = (points_uvw ./ points_uvw(3,:));
+        points_2d = points_2d(1:2,:);
+        d = (true_2d - points_2d).^2;
+        d = [d(1,:)'; d(2,:)'];
+        sigma= 1.48257968 * mad(d);
+        [err,W] = ro_calculate(d,sigma);
+        e_init = sum(err);
+        
+        v_X=skewer(v);
+        I_R1 = (eye(3)-rotMatrix) * [1 0 0]';
+        I_R2 = (eye(3)-rotMatrix) * [0 1 0]';
+        I_R3 = (eye(3)-rotMatrix) * [0 0 1]';
+        dR_v1 = (v(1)*v_X + skewer(I_R1) * skewer(v) - skewer(v) * skewer(I_R1))*rotMatrix ; %from paper
+        dR_v1 = dR_v1/norm(v);
+        dR_v2 = (v(2)*v_X + skewer(I_R2) * skewer(v) - skewer(v) * skewer(I_R2))*rotMatrix ;
+        dR_v2 = dR_v2/norm(v);
+        dR_v3 = (v(3)*v_X + skewer(I_R3) * skewer(v) - skewer(v) * skewer(I_R3))*rotMatrix ;
+        dR_v3 = dR_v3/norm(v);
+        J = compute_jacobian(points_3d,points_uvw,camera_params.IntrinsicMatrix,dR_v1,dR_v2,dR_v3);
+        delta = -inv(J'*W*J + lambda*eye(6)) * (J'*W*d);
+        temp_theta = delta' + theta;
+        points_uvw = project3d2image(currModel.coords3d(matches(2,:),:)',camera_params,rotationVectorToMatrix(temp_theta(1:3)),temp_theta(4:end),"uvw");
+        points_2d = (points_uvw ./ points_uvw(3,:));
+        points_2d = points_2d(1:2,:);
+        d = (true_2d - points_2d).^2;
+        d = [d(1,:)'; d(2,:)'];
+        sigma= 1.48257968 * mad(d);
+        [err,W] = ro_calculate(d,sigma);
+        e_new = sum(err);
+        if e_new > e_init
+            lambda=10*lambda;
+        else
+            lamda = lambda/10;
+            theta = theta + delta';
+        end
+        
+        u = norm(delta);
+         disp(e_new);
+    end
+    cam_in_world_orientations(:,:,i) = rotationVectorToMatrix(theta(1:3));
+    cam_in_world_locations(:,:,i) = theta(4:end);
+    %%CURRENTLY BEING IMPLEMENTED
+    break;
+%     [backCoords,backDescriptors] = back_projection(num_samples,keypoints{i-1},descriptors{i-1},cam_in_world_orientations(:,:,i-1),cam_in_world_locations(:,:,i-1),vert1,vert2,vert3,camera_params);
+%     currModel.coords3d = backCoords;
+%     currModel.descriptors = backDescriptors; %previous model
+%     matches = vl_ubcmatch(descriptors{i}, currModel.descriptors, threshold_ubcmatch);
+%     points = project3d2image(currModel.coords3d(matches(2,:),:)',camera_params,cam_in_world_orientations(:,:,i-1),cam_in_world_locations(:,:,i-1));
+%     rotVector= rotationMatrixToVector(cam_in_world_orientations(:,:,i-1 ));
+%     reproj_err = sum(norm(keypoints{i}(1:2,matches(1,:)) - points));
+%     flat_points = [];
+%     for k=1:size(points,2)
+%         flat_points = [flat_points;points(1,k); points(2,k)];    
+%     end
+%     e = flat_points;
+%     sigma = 1.48257968*mad(e);
+%     %%CURRENTLY BEING IMPLEMENTED
+%     jacobian
+%     break;
+end
 
 
 %% Plot camera trajectory in 3D world CS + cameras
