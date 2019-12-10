@@ -200,22 +200,6 @@ for i=2:num_images
     cam_in_world_locations(:,:,i) = theta(4:end);
     %%CURRENTLY BEING IMPLEMENTED
     break;
-%     [backCoords,backDescriptors] = back_projection(num_samples,keypoints{i-1},descriptors{i-1},cam_in_world_orientations(:,:,i-1),cam_in_world_locations(:,:,i-1),vert1,vert2,vert3,camera_params);
-%     currModel.coords3d = backCoords;
-%     currModel.descriptors = backDescriptors; %previous model
-%     matches = vl_ubcmatch(descriptors{i}, currModel.descriptors, threshold_ubcmatch);
-%     points = project3d2image(currModel.coords3d(matches(2,:),:)',camera_params,cam_in_world_orientations(:,:,i-1),cam_in_world_locations(:,:,i-1));
-%     rotVector= rotationMatrixToVector(cam_in_world_orientations(:,:,i-1 ));
-%     reproj_err = sum(norm(keypoints{i}(1:2,matches(1,:)) - points));
-%     flat_points = [];
-%     for k=1:size(points,2)
-%         flat_points = [flat_points;points(1,k); points(2,k)];    
-%     end
-%     e = flat_points;
-%     sigma = 1.48257968*mad(e);
-%     %%CURRENTLY BEING IMPLEMENTED
-%     jacobian
-%     break;
 end
 
 
