@@ -140,66 +140,71 @@ num_samples = 5000;
 num_images = size(Filenames,2);
 u = threshold_irls + 1;
 for i=2:num_images
-    if u < threshold_irls
-        break
-    end
+    fprintf("image %d",i);
     rotMatrix = cam_in_world_orientations(:,:,i-1 );
     translation_vector = cam_in_world_locations(:,:,i-1 );
     [backCoords,backDescriptors] = back_projection(num_samples,keypoints{i-1},descriptors{i-1},rotMatrix,translation_vector,vert1,vert2,vert3,camera_params);
-    currModel.coords3d = backCoords; 
+    currModel.coords3d = backCoords;
     currModel.descriptors = backDescriptors; %previous model
     matches = vl_ubcmatch(descriptors{i}, currModel.descriptors, threshold_ubcmatch);
-    m = (keypoints{i}(1:2,matches(1,:)));
- 
     points_3d = currModel.coords3d(matches(2,:),:);
     theta = [rotationMatrixToVector(rotMatrix) translation_vector];
     true_2d = keypoints{i}(1:2,matches(1,:));
+    u = threshold_irls + 1;
     for j=1:N
+        if u < threshold_irls
+            disp("early stop at iter");
+            disp(j);
+            break
+        end
         v = theta(1:3);
-        points_uvw = project3d2image(currModel.coords3d(matches(2,:),:)',camera_params,rotationVectorToMatrix(theta(4:end)),v,"uvw");
+        points_uvw = project3d2image(points_3d',camera_params,rotationVectorToMatrix(theta(1:3)),theta(4:end),"uvw");
         points_2d = (points_uvw ./ points_uvw(3,:));
         points_2d = points_2d(1:2,:);
-        d = (true_2d - points_2d).^2;
-        d = [d(1,:)'; d(2,:)'];
-        sigma= 1.48257968 * mad(d);
-        [err,W] = ro_calculate(d,sigma);
-        e_init = sum(err);
+    
+        e = compute_distances(points_2d,true_2d); %compute ProjM - m
+        sigma= 1.48257968 * mad(e);
+        [err,W] = ro_calculate(e,sigma);
+        E_init = sum(err);
         
         v_X=skewer(v);
         I_R1 = (eye(3)-rotMatrix) * [1 0 0]';
         I_R2 = (eye(3)-rotMatrix) * [0 1 0]';
         I_R3 = (eye(3)-rotMatrix) * [0 0 1]';
-        dR_v1 = (v(1)*v_X + skewer(I_R1) * skewer(v) - skewer(v) * skewer(I_R1))*rotMatrix ; %from paper
-        dR_v1 = dR_v1/norm(v);
-        dR_v2 = (v(2)*v_X + skewer(I_R2) * skewer(v) - skewer(v) * skewer(I_R2))*rotMatrix ;
-        dR_v2 = dR_v2/norm(v);
-        dR_v3 = (v(3)*v_X + skewer(I_R3) * skewer(v) - skewer(v) * skewer(I_R3))*rotMatrix ;
-        dR_v3 = dR_v3/norm(v);
+        dR_v1 = (v(1)*v_X + skewer(cross(v,I_R1)))*rotMatrix ;
+        dR_v1 = dR_v1/norm(v)^2;
+        dR_v2 = (v(2)*v_X + skewer(cross(v,I_R2)))*rotMatrix ;
+        dR_v2 = dR_v2/norm(v)^2;
+        dR_v3 = (v(3)*v_X + skewer(cross(v,I_R3)))*rotMatrix ;
+        dR_v3 = dR_v3/norm(v)^2;
+        [dR_v1,dR_v2,dR_v3] = test(v);
         J = compute_jacobian(points_3d,points_uvw,camera_params.IntrinsicMatrix,dR_v1,dR_v2,dR_v3);
-        delta = -inv(J'*W*J + lambda*eye(6)) * (J'*W*d);
-        temp_theta = delta' + theta;
-        points_uvw = project3d2image(currModel.coords3d(matches(2,:),:)',camera_params,rotationVectorToMatrix(temp_theta(1:3)),temp_theta(4:end),"uvw");
-        points_2d = (points_uvw ./ points_uvw(3,:));
-        points_2d = points_2d(1:2,:);
-        d = (true_2d - points_2d).^2;
-        d = [d(1,:)'; d(2,:)'];
-        sigma= 1.48257968 * mad(d);
-        [err,W] = ro_calculate(d,sigma);
-        e_new = sum(err);
-        if e_new > e_init
+        delta = (J'*W*J + lambda*eye(6)) / -1*(J'*W*e);
+        temp_theta = theta + delta';
+        %%COMPUTING NEW ENERGY
+        points_2d_new = project3d2image(points_3d',camera_params,rotationVectorToMatrix(temp_theta(1:3)),temp_theta(4:end),"NORMAL");
+%         imshow(char(Filenames(i)));
+%         scatter(points_2d_new(1,:),points_2d_new(2,:));
+        d_new = compute_distances(points_2d_new,true_2d);
+
+        sigma_new= 1.48257968 * mad(d_new);
+        [err_new,W_new] = ro_calculate(d_new,sigma_new);
+        E_new = sum(err_new);
+        if E_new > E_init
             lambda=10*lambda;
         else
             lamda = lambda/10;
-            theta = theta + delta';
+            theta = temp_theta;
+            disp(E_init);
+            disp(E_new);
+            disp("Accepted");
         end
         
         u = norm(delta);
-         disp(e_new);
     end
     cam_in_world_orientations(:,:,i) = rotationVectorToMatrix(theta(1:3));
     cam_in_world_locations(:,:,i) = theta(4:end);
     %%CURRENTLY BEING IMPLEMENTED
-    break;
 end
 
 
@@ -223,9 +228,9 @@ for i=1:num_files
     title(sprintf('Image: %d', i))
     hold on
     % Ground Truth Bounding Boxes
-    points_gt = project3d2image(vertices',camera_params, gt_valid.orientations(:,:,i), gt_valid.locations(:, :, i));
+    points_gt = project3d2image(vertices',camera_params, gt_valid.orientations(:,:,i), gt_valid.locations(:, :, i), "NORMAL");
     % Predicted Bounding Boxes
-    points_pred = project3d2image(vertices',camera_params, cam_in_world_orientations(:,:,i), cam_in_world_locations(:, :, i));
+    points_pred = project3d2image(vertices',camera_params, cam_in_world_orientations(:,:,i), cam_in_world_locations(:, :, i), "NORMAL");
     for j=1:12
         plot(points_gt(1, edges(:, j)), points_gt(2, edges(:,j)), 'color', 'g');
         plot(points_pred(1, edges(:, j)), points_pred(2, edges(:,j)), 'color', 'b');
