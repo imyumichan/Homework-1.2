@@ -2,14 +2,15 @@ clear
 clc
 close all
 addpath('helper_functions')
+addpath(genpath('../../vlfeat-0.9.21/'))
 
 %% Setup
 % path to the images folder
-path_img_dir = '../data/tracking/valid/img';
+path_img_dir = '../../data/tracking/validation/img';
 % path to object ply file
-object_path = '../data/teabox.ply';
+object_path = '../../data/teabox.ply';
 % path to results folder
-results_path = '../data/tracking/valid/results';
+results_path = '../../data/tracking/valid/results';
 
 % Read the object's geometry 
 % Here vertices correspond to object's corners and faces are triangles
@@ -132,7 +133,7 @@ hold off;
 threshold_irls = 0.005; % update threshold for IRLS
 lambda = 0.001;
 N = 20; % number of iterations
-threshold_ubcmatch = 6; % matching threshold for vl_ubcmatch()
+threshold_ubcmatch = 20; % matching threshold for vl_ubcmatch()
 vert1 = vertices(faces(:,1),:);
 vert2 = vertices(faces(:,2),:);
 vert3 = vertices(faces(:,3),:);
@@ -153,7 +154,7 @@ for i=2:num_images
     u = threshold_irls + 1;
     for j=1:N
         if u < threshold_irls
-            disp("early stop at iter");
+            disp("\nearly stop at iter");
             disp(j);
             break
         end
@@ -177,9 +178,9 @@ for i=2:num_images
         dR_v2 = dR_v2/norm(v)^2;
         dR_v3 = (v(3)*v_X + skewer(cross(v,I_R3)))*rotMatrix ;
         dR_v3 = dR_v3/norm(v)^2;
-        [dR_v1,dR_v2,dR_v3] = test(v);
+%         [dR_v1,dR_v2,dR_v3] = test(v);
         J = compute_jacobian(points_3d,points_uvw,camera_params.IntrinsicMatrix,dR_v1,dR_v2,dR_v3);
-        delta = (J'*W*J + lambda*eye(6)) / -1*(J'*W*e);
+        delta = inv(J'*W*J + lambda*eye(6)) * -1*(J'*W*e);
         temp_theta = theta + delta';
         %%COMPUTING NEW ENERGY
         points_2d_new = project3d2image(points_3d',camera_params,rotationVectorToMatrix(temp_theta(1:3)),temp_theta(4:end),"NORMAL");
