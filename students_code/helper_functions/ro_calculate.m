@@ -1,6 +1,5 @@
-function [err,W] = ro_calculate(e,sigma)
+function [err] = ro_calculate(e)
 c = 4.685;
-W = zeros(size(e,1),size(e,1));
 err = zeros(size(e,1));
 err = err(1,:);
 for i=1:size(e,1)
@@ -14,12 +13,7 @@ for i=1:size(e,1)
    else
       err(i) = c_const;
    end
-   e_i=e(i)/sigma;
-   if e_i < c
-       W(i,i) = (1 - (e_i/c)^2)^2;
-   else
-       W(i,i) = 0;
-   end
+
      
 end
 
