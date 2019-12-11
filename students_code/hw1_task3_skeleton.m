@@ -139,9 +139,8 @@ vert2 = vertices(faces(:,2),:);
 vert3 = vertices(faces(:,3),:);
 num_samples = 5000;
 num_images = size(Filenames,2);
-u = threshold_irls + 1;
 for i=2:num_images
-    fprintf("image %d",i);
+    fprintf("image %d\n",i);
     rotMatrix = cam_in_world_orientations(:,:,i-1 );
     translation_vector = cam_in_world_locations(:,:,i-1 );
     [backCoords,backDescriptors] = back_projection(num_samples,keypoints{i-1},descriptors{i-1},rotMatrix,translation_vector,vert1,vert2,vert3,camera_params);
@@ -154,34 +153,63 @@ for i=2:num_images
     u = threshold_irls + 1;
     for j=1:N
         if u < threshold_irls
-            disp("\nearly stop at iter");
-            disp(j);
+            fprintf('early stop at iter: %d\n', j);
             break
         end
         v = theta(1:3);
         points_uvw = project3d2image(points_3d',camera_params,rotationVectorToMatrix(theta(1:3)),theta(4:end),"uvw");
-        points_2d = (points_uvw ./ points_uvw(3,:));
+        points_2d = points_uvw ./ points_uvw(3,:);
         points_2d = points_2d(1:2,:);
-    
-        e = compute_distances(points_2d,true_2d); %compute ProjM - m
-        sigma= 1.48257968 * mad(e);
-        [err,W] = ro_calculate(e,sigma);
+
+        e = compute_distances(points_2d, true_2d); %compute ProjM - m
+        sigma = 1.48257968 * mad(e);
+        [err,W] = ro_calculate(e, sigma);
         E_init = sum(err);
         
-        v_X=skewer(v);
-        I_R1 = (eye(3)-rotMatrix) * [1 0 0]';
-        I_R2 = (eye(3)-rotMatrix) * [0 1 0]';
-        I_R3 = (eye(3)-rotMatrix) * [0 0 1]';
-        dR_v1 = (v(1)*v_X + skewer(cross(v,I_R1)))*rotMatrix ;
-        dR_v1 = dR_v1/norm(v)^2;
-        dR_v2 = (v(2)*v_X + skewer(cross(v,I_R2)))*rotMatrix ;
-        dR_v2 = dR_v2/norm(v)^2;
-        dR_v3 = (v(3)*v_X + skewer(cross(v,I_R3)))*rotMatrix ;
-        dR_v3 = dR_v3/norm(v)^2;
-%         [dR_v1,dR_v2,dR_v3] = test(v);
-        J = compute_jacobian(points_3d,points_uvw,camera_params.IntrinsicMatrix,dR_v1,dR_v2,dR_v3);
-        delta = inv(J'*W*J + lambda*eye(6)) * -1*(J'*W*e);
-        temp_theta = theta + delta';
+        % E(p) = dists of the proj with parametic vector p (contains rotation and translation)
+%         v_X=skewer(v);
+%         I_R1 = (eye(3)-rotMatrix) * [1 0 0]';
+%         I_R2 = (eye(3)-rotMatrix) * [0 1 0]';
+%         I_R3 = (eye(3)-rotMatrix) * [0 0 1]';
+%         dR_v1 = (v(1)*v_X + skewer(cross(v,I_R1)))*rotMatrix ;
+%         dR_v1 = dR_v1/norm(v)^2;
+%         dR_v2 = (v(2)*v_X + skewer(cross(v,I_R2)))*rotMatrix ;
+%         dR_v2 = dR_v2/norm(v)^2;
+%         dR_v3 = (v(3)*v_X + skewer(cross(v,I_R3)))*rotMatrix ;
+%         dR_v3 = dR_v3/norm(v)^2;
+% %         [dR_v1,dR_v2,dR_v3] = test(v);
+%         J = compute_jacobian(points_3d,points_uvw,camera_params.IntrinsicMatrix,dR_v1,dR_v2,dR_v3);
+
+        syms r1 r2 r3 t1 t2 t3 u v X Y Z;
+        A = intrinsicMatrix;
+        r = [r1 r2 r3];
+        norm_r = norm(r);
+        m = [u v]';
+        mat = [0 -r3 -r2;r3 0 -r1;-r2 r1 0];
+        R = (eye(3) +(sin(norm_r)*mat)/norm_r  + ((1 - cos(norm_r))*mat*mat)/norm_r^2)';
+        M = [X Y Z];
+        T = [t1 t2 t3];
+        p = [r1 r2 r3 t1 t2 t3];
+        M_cam = R*M' + T';
+        m_uvw = A*M_cam;
+        m_img = m_uvw./m_uvw(3);
+        m_img = m_img(1:2);
+        res = m_img - m;
+
+        J_ml = jacobian(res, [r1 r2 r3 t1 t2 t3]);
+        J = zeros(size(e,1), 6);
+        for p=1:size(true_2d,2)
+            temp_J = subs(J_ml,r,theta(1:3));
+            temp_J = subs(temp_J,T,theta(4:6));
+            temp_J = subs(temp_J,M,points_3d(p,:));
+            temp_J = subs(temp_J,m,true_2d(:,p));
+            J(2*p-1:2*p,:) = temp_J;
+        end
+        
+        
+        delta = -1 * pinv(J'*W*J + lambda*eye(6)) * (J'*W*e);
+        temp_theta = theta + delta'; 
+        
         %%COMPUTING NEW ENERGY
         points_2d_new = project3d2image(points_3d',camera_params,rotationVectorToMatrix(temp_theta(1:3)),temp_theta(4:end),"NORMAL");
 %         imshow(char(Filenames(i)));
@@ -196,9 +224,7 @@ for i=2:num_images
         else
             lamda = lambda/10;
             theta = temp_theta;
-            disp(E_init);
-            disp(E_new);
-            disp("Accepted");
+            fprintf("%f, %f => Accepted\n", E_init, E_new);
         end
         
         u = norm(delta);
