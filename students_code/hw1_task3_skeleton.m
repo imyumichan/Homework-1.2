@@ -81,7 +81,6 @@ load('sift_keypoints.mat');
 
 
 % TODO: Estimate camera position for the first image
-% [init_orientation, init_location] = estimateWorldCameraPose(image_points, world_points, camera_params, 'MaxReprojectionError', 4);
 % [init_orientation, init_location] = find_initial_pose();
 load('init_location.mat')
 load('init_orientation.mat')
@@ -130,9 +129,9 @@ hold off;
 % either using Symbolic toolbox or finite differences approach
 
 % TODO: Implement IRLS method for the reprojection error optimisation
-threshold_irls = 5e-3; % update threshold for IRLS
+threshold_irls = 1.8e-5; % update threshold for IRLS
 N = 40; % number of iterations
-threshold_ubcmatch = 25; % matching threshold for vl_ubcmatch()
+threshold_ubcmatch = 40; % matching threshold for vl_ubcmatch()
 vert1 = vertices(faces(:,1),:);
 vert2 = vertices(faces(:,2),:);
 vert3 = vertices(faces(:,3),:);
@@ -145,7 +144,7 @@ jacobian_method = "chainrule";
 
 if jacobian_method == "symbolicmath"
     syms r1 r2 r3 t1 t2 t3 u v X Y Z;
-    A = intrinsicMatrix;
+    A = intrinsicMatrix';
     r = [r1 r2 r3];
     norm_r = norm(r);
     m = [u v]';
@@ -225,7 +224,7 @@ for i=2:num_images
             dR_v3 = (v(3)*v_X + skewer(cross(v,I_R3)))*rotMatrix ;
             dR_v3 = dR_v3/norm(v)^2;
 %             [dR_v1,dR_v2,dR_v3] = test(v);
-            J = compute_jacobian(points_3d,points_uvw,camera_params.IntrinsicMatrix,dR_v1,dR_v2,dR_v3);
+            J = compute_jacobian(points_3d,points_uvw,camera_params.IntrinsicMatrix',dR_v1,dR_v2,dR_v3);
         else
             % Jacobian Method 2
             % Using Symbolic Math toolbox
@@ -317,4 +316,8 @@ end
 % approximately less than 1cm
 
 % TODO: Estimate ATE and RPE for validation and test sequences
+% for i=1:num_files
+%     fprintf('%d %f %f %f %f %f %f %f\n', i, cam_in_world_locations(:,1,i), cam_in_world_locations(:,2,i), ...,
+%     cam_in_world_locations(:,3,i));
+% end
 

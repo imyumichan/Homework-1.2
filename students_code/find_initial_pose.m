@@ -8,8 +8,6 @@ intrinsicMatrix = [2960.37845 0 0;
     1841.68855 1235.23369  1];
 
 camera_params = cameraParameters('IntrinsicMatrix',intrinsicMatrix);
-% camera_params = cameraParameters();
-cam_intrinsics=camera_params;
 
 % threshold_ubcmatch = 1.5;
 threshold_ransac = 20;
@@ -37,7 +35,7 @@ for j=1:ransac_iterations
         = estimateWorldCameraPose(detect_image_points, detect_world_points, camera_params, 'MaxReprojectionError', max_reproj_err);
     
     points_thd=model.coord3d(init_sift_matches(2,:),:)';
-    points_td = project3d2image(points_thd, cam_intrinsics, cam_world_orientations, cam_world_locations);
+    points_td = project3d2image(points_thd, camera_params, cam_world_orientations, cam_world_locations);
     points_otd=init_keypoints(1:2,init_sift_matches(1,:));
     inlier_temp=[];
     inlier_td_temp=[];
