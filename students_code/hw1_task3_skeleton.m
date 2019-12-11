@@ -12,14 +12,14 @@ object_path = '../../data/teabox.ply';
 % path to results folder
 results_path = '../../data/tracking/valid/results';
 
-% Read the object's geometry 
+% Read the object's geometry
 % Here vertices correspond to object's corners and faces are triangles
 [vertices, faces] = read_ply(object_path);
 faces=faces+1;
 
 % Create directory for results
-if ~exist(results_path,'dir') 
-    mkdir(results_path); 
+if ~exist(results_path,'dir')
+    mkdir(results_path);
 end
 
 % Load Ground Truth camera poses for the validation sequence
@@ -49,12 +49,12 @@ cam_in_world_locations = zeros(1,3,num_files);
 % Don't forget to add vlfeat folder to MATLAB path
 
 % Place SIFT keypoints and corresponding descriptors for all images here
-keypoints = cell(num_files,1); 
-descriptors = cell(num_files,1); 
+keypoints = cell(num_files,1);
+descriptors = cell(num_files,1);
 
 % for i=1:length(Filenames)
 %     fprintf('Calculating sift features for image: %d \n', i)
-%     
+%
 % %    TODO: Prepare the image (img) for vl_sift() function
 %     img = single(rgb2gray(imread(char(Filenames(i)))));
 %     [keypoints{i}, descriptors{i}] = vl_sift(img) ;
@@ -70,7 +70,7 @@ load('sift_keypoints.mat');
 %% Initialization: Compute camera pose for the first image
 
 % As the initialization step for the tracking
-% we need to compute the camera pose for the first image 
+% we need to compute the camera pose for the first image
 % The first image and it's camera pose will be our initial frame and initial camera pose for the tracking process
 
 % You can use estimateWorldCameraPose() function or your own implementation
@@ -110,7 +110,7 @@ hold off;
 
 % Method steps:
 % 1) Project SIFT keypoints from the initial frame (image i) to the object using the
-% initial camera pose and the 3D ray intersection code from the task 1. 
+% initial camera pose and the 3D ray intersection code from the task 1.
 % This will give you 3D coordinates (in the world coordinate system) of the
 % SIFT keypoints from the initial frame (image i) that correspond to the object
 % 2) Find matches between SIFT keypoints from the initial frame (image i) and the
@@ -130,8 +130,8 @@ hold off;
 % either using Symbolic toolbox or finite differences approach
 
 % TODO: Implement IRLS method for the reprojection error optimisation
-threshold_irls = 0.005; % update threshold for IRLS
-N = 20; % number of iterations
+threshold_irls = 5e-3; % update threshold for IRLS
+N = 40; % number of iterations
 threshold_ubcmatch = 25; % matching threshold for vl_ubcmatch()
 vert1 = vertices(faces(:,1),:);
 vert2 = vertices(faces(:,2),:);
@@ -164,6 +164,7 @@ if jacobian_method == "symbolicmath"
 end
 
 for i=2:num_images
+    
     fprintf("image %d\n",i);
     rotMatrix = cam_in_world_orientations(:,:,i-1 );
     translation_vector = cam_in_world_locations(:,:,i-1 );
@@ -177,22 +178,40 @@ for i=2:num_images
     theta = [rotationMatrixToVector(rotMatrix) translation_vector];
     lambda = 0.001;
     u = threshold_irls + 1;
+    stop_count = 0;
+    
     for j=1:N
+        
         if u < threshold_irls
-            fprintf('early stop at iter: %d\n', j);
+            fprintf("Early stop at %d \n",j);
             break
+%             stop_count=stop_count + 1;
+%             if stop_count > 2
+%                 fprintf("Early stop at %d \n",j);
+%                 break
+%             end
+%         else
+%             stop_count = 0;
         end
+        
         v = theta(1:3);
         points_uvw = project3d2image(points_3d',camera_params,rotationVectorToMatrix(theta(1:3)),theta(4:end),"uvw");
         points_2d = points_uvw ./ points_uvw(3,:);
         points_2d = points_2d(1:2,:);
 
         e = compute_distances(points_2d, true_2d); %compute ProjM - m
-        sigma = 1.48257968 * mad(e);
-        [err,W] = ro_calculate(e, sigma);
+        err = ro_calculate(e);
         E_init = sum(err);
+        W = weight_mat_create(e);
+%         rv = rotationVectorToMatrix(theta(1:3));
+%         tv = theta(4:end);
+%         J = zeros(size(e,1),6);
+%         for q=1:2:size(e,1)
+%             
+%             J(q:q+1,:) = test(camera_params.IntrinsicMatrix,rv,tv,true_2d(:,uint8(q/2)),points_3d(uint8(q/2),:));
+%             
+%         end
         
-        % E(p) = dists of the proj with parametic vector p (contains rotation and translation)
         if jacobian_method == "chainrule"
             % Jacobian Method 1
             % Using Chain Rule
@@ -224,26 +243,24 @@ for i=2:num_images
         
         delta = -1 * inv(J'*W*J + lambda*eye(6)) * (J'*W*e);
         temp_theta = theta + delta'; 
-        
+
         %%COMPUTING NEW ENERGY
         points_2d_new = project3d2image(points_3d',camera_params,rotationVectorToMatrix(temp_theta(1:3)),temp_theta(4:end),"NORMAL");
-%         imshow(char(Filenames(i)));
-%         scatter(points_2d_new(1,:),points_2d_new(2,:));
+        %         imshow(char(Filenames(i)));
+        %         scatter(points_2d_new(1,:),points_2d_new(2,:));
         d_new = compute_distances(points_2d_new,true_2d);
-
-        sigma_new= 1.48257968 * mad(d_new);
-        [err_new,W_new] = ro_calculate(d_new,sigma_new);
+        err_new = ro_calculate(d_new);
         E_new = sum(err_new);
+        %         E_new = norm(d_new);
         if E_new > E_init
             lambda=10*lambda;
         else
             fprintf("%f, %f => Accepted\n", E_init, E_new);
             disp(theta);
             disp(delta');
-            lamda = lambda/10;
+            lambda = lambda/10;
             theta = temp_theta;
         end
-        
         u = norm(delta);
     end
     cam_in_world_orientations(:,:,i) = rotationVectorToMatrix(theta(1:3));
