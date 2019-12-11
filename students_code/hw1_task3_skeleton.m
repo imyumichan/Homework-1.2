@@ -131,14 +131,38 @@ hold off;
 
 % TODO: Implement IRLS method for the reprojection error optimisation
 threshold_irls = 0.005; % update threshold for IRLS
-lambda = 0.001;
 N = 20; % number of iterations
-threshold_ubcmatch = 20; % matching threshold for vl_ubcmatch()
+threshold_ubcmatch = 25; % matching threshold for vl_ubcmatch()
 vert1 = vertices(faces(:,1),:);
 vert2 = vertices(faces(:,2),:);
 vert3 = vertices(faces(:,3),:);
 num_samples = 5000;
 num_images = size(Filenames,2);
+
+% Choose the Jacobian calculation method
+jacobian_method = "chainrule";
+% jacobian_method = "symbolicmath";
+
+if jacobian_method == "symbolicmath"
+    syms r1 r2 r3 t1 t2 t3 u v X Y Z;
+    A = intrinsicMatrix;
+    r = [r1 r2 r3];
+    norm_r = norm(r);
+    m = [u v]';
+    mat = [0 -r3 -r2;r3 0 -r1;-r2 r1 0];
+    R = (eye(3) +(sin(norm_r)*mat)/norm_r  + ((1 - cos(norm_r))*mat*mat)/norm_r^2)';
+    M = [X Y Z];
+    T = [t1 t2 t3];
+    p = [r1 r2 r3 t1 t2 t3];
+    M_cam = R*M' + T';
+    m_uvw = A*M_cam;
+    m_img = m_uvw./m_uvw(3);
+    m_img = m_img(1:2);
+    res = m_img - m;
+
+    J_ml = jacobian(res, [r1 r2 r3 t1 t2 t3]);
+end
+
 for i=2:num_images
     fprintf("image %d\n",i);
     rotMatrix = cam_in_world_orientations(:,:,i-1 );
@@ -148,8 +172,10 @@ for i=2:num_images
     currModel.descriptors = backDescriptors; %previous model
     matches = vl_ubcmatch(descriptors{i}, currModel.descriptors, threshold_ubcmatch);
     points_3d = currModel.coords3d(matches(2,:),:);
-    theta = [rotationMatrixToVector(rotMatrix) translation_vector];
     true_2d = keypoints{i}(1:2,matches(1,:));
+    
+    theta = [rotationMatrixToVector(rotMatrix) translation_vector];
+    lambda = 0.001;
     u = threshold_irls + 1;
     for j=1:N
         if u < threshold_irls
@@ -167,47 +193,36 @@ for i=2:num_images
         E_init = sum(err);
         
         % E(p) = dists of the proj with parametic vector p (contains rotation and translation)
-%         v_X=skewer(v);
-%         I_R1 = (eye(3)-rotMatrix) * [1 0 0]';
-%         I_R2 = (eye(3)-rotMatrix) * [0 1 0]';
-%         I_R3 = (eye(3)-rotMatrix) * [0 0 1]';
-%         dR_v1 = (v(1)*v_X + skewer(cross(v,I_R1)))*rotMatrix ;
-%         dR_v1 = dR_v1/norm(v)^2;
-%         dR_v2 = (v(2)*v_X + skewer(cross(v,I_R2)))*rotMatrix ;
-%         dR_v2 = dR_v2/norm(v)^2;
-%         dR_v3 = (v(3)*v_X + skewer(cross(v,I_R3)))*rotMatrix ;
-%         dR_v3 = dR_v3/norm(v)^2;
-% %         [dR_v1,dR_v2,dR_v3] = test(v);
-%         J = compute_jacobian(points_3d,points_uvw,camera_params.IntrinsicMatrix,dR_v1,dR_v2,dR_v3);
-
-        syms r1 r2 r3 t1 t2 t3 u v X Y Z;
-        A = intrinsicMatrix;
-        r = [r1 r2 r3];
-        norm_r = norm(r);
-        m = [u v]';
-        mat = [0 -r3 -r2;r3 0 -r1;-r2 r1 0];
-        R = (eye(3) +(sin(norm_r)*mat)/norm_r  + ((1 - cos(norm_r))*mat*mat)/norm_r^2)';
-        M = [X Y Z];
-        T = [t1 t2 t3];
-        p = [r1 r2 r3 t1 t2 t3];
-        M_cam = R*M' + T';
-        m_uvw = A*M_cam;
-        m_img = m_uvw./m_uvw(3);
-        m_img = m_img(1:2);
-        res = m_img - m;
-
-        J_ml = jacobian(res, [r1 r2 r3 t1 t2 t3]);
-        J = zeros(size(e,1), 6);
-        for p=1:size(true_2d,2)
-            temp_J = subs(J_ml,r,theta(1:3));
-            temp_J = subs(temp_J,T,theta(4:6));
-            temp_J = subs(temp_J,M,points_3d(p,:));
-            temp_J = subs(temp_J,m,true_2d(:,p));
-            J(2*p-1:2*p,:) = temp_J;
+        if jacobian_method == "chainrule"
+            % Jacobian Method 1
+            % Using Chain Rule
+            v_X=skewer(v);
+            I_R1 = (eye(3)-rotMatrix) * [1 0 0]';
+            I_R2 = (eye(3)-rotMatrix) * [0 1 0]';
+            I_R3 = (eye(3)-rotMatrix) * [0 0 1]';
+            dR_v1 = (v(1)*v_X + skewer(cross(v,I_R1)))*rotMatrix ;
+            dR_v1 = dR_v1/norm(v)^2;
+            dR_v2 = (v(2)*v_X + skewer(cross(v,I_R2)))*rotMatrix ;
+            dR_v2 = dR_v2/norm(v)^2;
+            dR_v3 = (v(3)*v_X + skewer(cross(v,I_R3)))*rotMatrix ;
+            dR_v3 = dR_v3/norm(v)^2;
+%             [dR_v1,dR_v2,dR_v3] = test(v);
+            J = compute_jacobian(points_3d,points_uvw,camera_params.IntrinsicMatrix,dR_v1,dR_v2,dR_v3);
+        else
+            % Jacobian Method 2
+            % Using Symbolic Math toolbox
+            J = zeros(size(e,1), 6);
+            for p=1:size(true_2d,2)
+                temp_J = subs(J_ml,r,theta(1:3));
+                temp_J = subs(temp_J,T,theta(4:6));
+                temp_J = subs(temp_J,M,points_3d(p,:));
+                temp_J = subs(temp_J,m,true_2d(:,p));
+                temp_J = double(temp_J);
+                J(2*p-1:2*p,:) = temp_J;
+            end
         end
         
-        
-        delta = -1 * pinv(J'*W*J + lambda*eye(6)) * (J'*W*e);
+        delta = -1 * inv(J'*W*J + lambda*eye(6)) * (J'*W*e);
         temp_theta = theta + delta'; 
         
         %%COMPUTING NEW ENERGY
@@ -222,9 +237,11 @@ for i=2:num_images
         if E_new > E_init
             lambda=10*lambda;
         else
+            fprintf("%f, %f => Accepted\n", E_init, E_new);
+            disp(theta);
+            disp(delta');
             lamda = lambda/10;
             theta = temp_theta;
-            fprintf("%f, %f => Accepted\n", E_init, E_new);
         end
         
         u = norm(delta);
