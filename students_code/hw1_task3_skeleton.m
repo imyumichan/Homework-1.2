@@ -169,17 +169,15 @@ for i=2:num_images
     rotMatrix = cam_in_world_orientations(:,:,i-1 );
     translation_vector = cam_in_world_locations(:,:,i-1 );
     [backCoords,backDescriptors] = back_projection(num_samples,keypoints{i-1},descriptors{i-1},rotMatrix,translation_vector,vert1,vert2,vert3,camera_params);
-    currModel.coords3d = backCoords;
-    currModel.descriptors = backDescriptors; %previous model
-    matches = vl_ubcmatch(descriptors{i}, currModel.descriptors, threshold_ubcmatch);
-    points_3d = currModel.coords3d(matches(2,:),:);
+    matches = vl_ubcmatch(descriptors{i}, backDescriptors, threshold_ubcmatch);
+    points_3d = backCoords(matches(2,:),:);
     true_2d = keypoints{i}(1:2,matches(1,:));
     
     theta = [rotationMatrixToVector(rotMatrix) translation_vector];
     lambda = 0.001;
     u = threshold_irls + 1;
     stop_count = 0;
-    
+        
     for j=1:N
         
         if u < threshold_irls
@@ -194,7 +192,6 @@ for i=2:num_images
 %             stop_count = 0;
         end
         
-        v = theta(1:3);
         points_uvw = project3d2image(points_3d',camera_params,rotationVectorToMatrix(theta(1:3)),theta(4:end),"uvw");
         points_2d = points_uvw ./ points_uvw(3,:);
         points_2d = points_2d(1:2,:);
@@ -203,6 +200,7 @@ for i=2:num_images
         err = ro_calculate(e);
         E_init = sum(err);
         W = weight_mat_create(e);
+
 %         rv = rotationVectorToMatrix(theta(1:3));
 %         tv = theta(4:end);
 %         J = zeros(size(e,1),6);
@@ -215,6 +213,7 @@ for i=2:num_images
         if jacobian_method == "chainrule"
             % Jacobian Method 1
             % Using Chain Rule
+            v = theta(1:3);
             v_X=skewer(v);
             I_R1 = (eye(3)-rotMatrix) * [1 0 0]';
             I_R2 = (eye(3)-rotMatrix) * [0 1 0]';
@@ -248,11 +247,10 @@ for i=2:num_images
         points_2d_new = project3d2image(points_3d',camera_params,rotationVectorToMatrix(temp_theta(1:3)),temp_theta(4:end),"NORMAL");
         %         imshow(char(Filenames(i)));
         %         scatter(points_2d_new(1,:),points_2d_new(2,:));
-        d_new = compute_distances(points_2d_new,true_2d);
-        err_new = ro_calculate(d_new);
+        e_new = compute_distances(points_2d_new,true_2d);
+        err_new = ro_calculate(e_new);
         E_new = sum(err_new);
-        %         E_new = norm(d_new);
-        if E_new > E_init
+        if E_new >= E_init
             lambda=10*lambda;
         else
             fprintf("%f, %f => Accepted\n", E_init, E_new);
@@ -265,6 +263,7 @@ for i=2:num_images
     end
     cam_in_world_orientations(:,:,i) = rotationVectorToMatrix(theta(1:3));
     cam_in_world_locations(:,:,i) = theta(4:end);
+    fprintf('final theta: '); disp(theta);
     %%CURRENTLY BEING IMPLEMENTED
 end
 
